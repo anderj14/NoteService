@@ -1,7 +1,13 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using NoteService.Models;
 using NoteService.Tools;
+using System.Configuration;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 
 namespace NoteService.Controllers
 {
@@ -10,12 +16,13 @@ namespace NoteService.Controllers
     public class UserController : ControllerBase
     {
         private readonly NoteDatabaseContext _context;
+        private readonly IConfiguration _configuration;
 
-        public UserController(NoteDatabaseContext context)
+        public UserController(NoteDatabaseContext context, IConfiguration configuration)
         {
             _context = context;
+            _configuration = configuration;
         }
-
 
         [HttpPost]
         [Route("login")]
@@ -37,7 +44,20 @@ namespace NoteService.Controllers
                     return Ok("Username or password is incorrect");
                 }
 
-                return Ok(dbUser);
+                List<Claim> authClaims = new List<Claim>
+                {
+                    new Claim(ClaimTypes.Name, dbUser.Username),
+                    new Claim("userID", dbUser.UserId.ToString()),
+                    new Claim("username", dbUser.Username)
+                };
+
+                var token = this.getToken(authClaims);
+
+                return Ok(new
+                {
+                    token = new JwtSecurityTokenHandler().WriteToken(token),
+                    expiration = token.ValidTo
+                });
             }
             catch(Exception e)
             {
@@ -73,6 +93,7 @@ namespace NoteService.Controllers
             }
         }
 
+        [Authorize]
         [HttpGet]
         [Route("Users")]
         public async Task<IActionResult> GetUsers()
@@ -91,6 +112,21 @@ namespace NoteService.Controllers
             {
                 return BadRequest(ex.Message);
             }
+        }
+
+        private JwtSecurityToken getToken(List<Claim> authClaim)
+        {
+            var authSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]));
+
+            var token = new JwtSecurityToken(
+                issuer: _configuration["JWT:ValidIssuer"],
+                audience: _configuration["JWT:ValidAudience"],
+                expires: DateTime.Now.AddHours(24),
+                claims: authClaim,
+                signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
+                );
+
+            return token;
         }
     }
 }
